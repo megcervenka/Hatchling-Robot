@@ -1,132 +1,170 @@
-# Hatchling Robot — HURC-Controlled Drive + Conveyor
+# Turtle Receiver
 
-A PlatformIO / Arduino project for the TURTLE Hatchling program. Drives a
-two-wheeled robot with the left/right joysticks on the HURC controller, and
-toggles a conveyor motor with the A button.
+A lightweight ESP32 “network controller” receiver for using the HURC.  
+Provides easy-to-use functions to receive controller input (joystick axes, buttons) over ESP-NOW.
 
-## Hardware
+---
 
-- uPesy ESP32 Wroom DevKit (on the robot)
-- HURC dev2 controller (separate device, flashed with your robot's MAC)
-- 2× L298N motor drivers
-- 3× TT-motors (2 drive wheels + 1 conveyor)
-- 7.2V NiMH battery pack
+## Table of Contents
 
-### Wiring
+- [Features](#features)  
+- [Hardware Requirements](#hardware-requirements)  
+- [Software Requirements](#software-requirements)  
+- [Installation](#installation)  
+- [Usage](#usage)  
+  - [Initialization](#initialization)  
+  - [Reading Inputs](#reading-inputs)  
+- [API Reference](#api-reference)  
+- [Example Sketch](#example-sketch)  
 
-Power (per the Hatchling Hardware slide):
+---
 
-- 7.2V battery → L298N #1 `12V` + `GND`
-- ESP32 `5V` pin ← L298N #1 `5V` pin
-- All grounds (battery, both L298Ns, ESP32) tied together — **common ground**
-- ⚠️ Never power the ESP32 from USB and `5V` pin at the same time
+## Features
 
-Pin mapping (see `src/main.cpp`):
+- Receive analog joystick X/Y axes 
+- Detect joystick press (Z click)  
+- Read digital button states (A, B, X, Y, L, R)  
+- Optional debug‑message printing via Serial  
+- Uses ESP-NOW for low‑latency wireless input  
 
-| Function | ESP32 pin | L298N pin |
-| --- | --- | --- |
-| Left motor IN1 / IN2 / ENA | 27 / 26 / 14 | L298N #1 IN1 / IN2 / ENA |
-| Right motor IN3 / IN4 / ENB | 25 / 33 / 32 | L298N #1 IN3 / IN4 / ENB |
-| Conveyor IN1 / IN2 / ENA | 18 / 19 / 5 | L298N #2 IN1 / IN2 / ENA |
+---
 
-## Controls
+## Hardware Requirements
 
-| Input | Action |
-| --- | --- |
-| Left joystick Y | Forward / reverse |
-| Right joystick X | Turn left / right |
-| A button | Toggle conveyor on/off (press to flip) |
+- ESP32 development board (any variant)  
+- Controller transmitter running matching ESP-NOW code  
+- USB cable for programming and power  
 
-The drive mixing is arcade-style: `left = fwd + turn`, `right = fwd - turn`.
-A 15% deadzone ignores tiny stick drift.
+---
 
-## Setup
+## Software Requirements
 
-### 1. Build and flash
+- Arduino IDE 1.8.13+ (or PlatformIO)  
+- ESP32 board support installed  
+- Libraries:
+  - `esp_now`
+  - `esp_wifi`
+  - `WiFi`
 
-Open this folder in VS Code with the **PlatformIO IDE** extension installed,
-then:
+---
 
-1. Click the **✓ Build** button (bottom toolbar). Red squiggles in the editor
-   are often "ghost errors" from IntelliSense — only the terminal output from
-   Build is authoritative.
-2. Plug the ESP32 into USB.
-3. Click **→ Upload**.
-4. Click the **🔌 Serial Monitor** button.
+## Installation
 
-### 2. Pair the controller with this robot
+1. Clone or download this repository into your PlatformIO project's lib folder. 
+2. Include `TurtleReceiver.h` in your sketch:
 
-#### What's actually happening
+    ```cpp
+    #include <TurtleReceiver.h>
+    ```
 
-Every ESP32 has a unique 6-byte **MAC address** baked in at the factory — it
-looks like `A4:CF:12:AB:CD:EF`. Think of it as a serial number for networking.
-Your laptop has one, your phone has one, every Wi-Fi device has one.
+---
 
-The HURC controller and your robot both contain an ESP32, and they talk using
-a protocol called **ESP-NOW** — Espressif's peer-to-peer thing. It's fast and
-doesn't need a router or a Wi-Fi network, but it has one rule: **the sender
-must know the receiver's MAC address before it can send anything**. Like you
-can't mail a package without writing the address on it.
+## Usage
 
-So the pairing goes:
+### Initialization
 
-1. You upload this code to the robot's ESP32. `printMacAddress()` reads that
-   chip's MAC and prints it to the serial monitor.
-2. You copy that string (or screenshot it) and hand it to a Hatchling director.
-3. The director has the controller's source code. They paste your MAC into a
-   line that looks roughly like
-   `uint8_t robotMac[] = {0x24, 0x6F, 0x28, 0xAB, 0xCD, 0xEF};` and flash that
-   to your specific HURC.
-4. Now the controller has your robot's address hardcoded. Joystick input
-   beams packets to exactly your MAC. Other robots in the room ignore them;
-   yours picks them up.
+1. In your `setup()` function, initialize Serial (if using debug) and the receiver:
 
-The `TurtleReceiver` library on the robot side is just listening — it
-doesn't care who the controller is, it accepts whatever arrives. That's why
-pairing only has to happen on the controller side.
+    ```cpp
+    #include <TurtleReceiver.h>
 
-#### Steps
+    // Enable debug messages? true = on, false = off  NOTE: this will flood your monitor with messages. Only enable if truly necessary.
+    NetController controller(/* displayDebugMessage = */ true);
 
-1. With the Serial Monitor open, press the ESP32's **EN** button to reset.
-   You'll see a line like:
-   ```
-   Mac Address: 24:6F:28:AB:CD:EF
-   ```
-2. Send that MAC to a Hatchling director. They flash it into your HURC
-   controller's firmware.
-3. Once paired, the MAC doesn't change — the ESP32 keeps the same MAC for
-   life unless the chip itself gets swapped. Comment out or delete the
-   `printMacAddress()` line in `src/main.cpp` and re-upload.
+    void setup() {
+      Serial.begin(115200);
+      controller.controllerSetup();
+    }
+    ```
 
-## Troubleshooting
+2. Optionally, print the ESP32’s MAC address for pairing:
 
-- **Build fails on `#include <TurtleReceiver.h>`** → move the library files
-  from `lib/TurtleReceiver/` to `src/` and rebuild.
-- **Upload fails / "failed to connect"** → hold the ESP32's **Boot** button
-  while the upload starts, release once it begins writing.
-- **Serial Monitor shows garbage** → `monitor_speed` in `platformio.ini` must
-  match `Serial.begin()` in code. Both are `115200` here; don't change one
-  without the other.
-- **Motors spin the wrong way** → swap IN1 and IN2 for that motor (either in
-  the wiring or in `src/main.cpp`).
-- **Nothing moves but controller is paired** → check that all grounds are
-  common, and that the L298N jumpers over the ENA/ENB pins are **removed**
-  (the code drives those with PWM).
+    ```cpp
+    printMacAddress();
+    ```
 
-## Project layout
+### Reading Inputs
+
+In your `loop()`, poll the controller for input states:
+
+```cpp
+void loop() {
+  float x = controller.getJoy1X();
+  float y = controller.getJoy1Y();
+  bool click = controller.getJoy1Z();
+
+  if (controller.getA()) {
+    // A button pressed
+  }
+  // ... similarly for getB(), getX(), getY(), getL(), getR()
+}
 
 ```
-Hatchling-Robot/
-├── platformio.ini              PlatformIO board + monitor config
-├── src/main.cpp                Drive + conveyor logic
-├── lib/TurtleReceiver/         HURC receiver library (vendored)
-├── include/                    (empty — for your own headers)
-└── test/                       (empty — for unit tests)
+
+---
+
+## API Reference
+
+### Class: `NetController`
+
+| Method                                    | Description                                                                                  |
+|-------------------------------------------|----------------------------------------------------------------------------------------------|
+| `NetController(bool displayDebug=false)`  | Constructor. Pass `true` to enable serial debug messages (requires `Serial.begin()` first). Will flood the monitor with messages, use only if necessary. |
+| `void controllerSetup()`                  | Initialize ESP‑NOW and Wi‑Fi for receiving controller data. Call once in `setup()`.         |
+| `float getJoy1X()`                        | Returns left joystick X-axis in range **[-1.0, 1.0]**.                                       |
+| `float getJoy1Y()`                        | Returns left joystick Y-axis in range **[-1.0, 1.0]**.                                       |
+| `bool getJoy1Z()`                         | Returns `true` if left joystick is clicked (pressed down), otherwise `false`.               |
+| `bool getA()`                             | Returns `true` if the A button (Xbox layout) is pressed.                                |
+| `bool getB()`                             | Returns `true` if the B button (Xbox layout) is pressed.                                |
+| `bool getX()`                             | Returns `true` if the X button (Xbox layout) is pressed.                             |
+| `bool getY()`                             | Returns `true` if the Y button (Xbox layout) is pressed.                                |
+| `bool getR()`                             | Returns `true` if the right shoulder button is pressed.                                |
+| `bool getL()`                             | Returns `true` if the left shoulder button is pressed.                             |
+
+### Free Functions
+
+| Function                                 | Description                                                           |
+|------------------------------------------|-----------------------------------------------------------------------|
+| `void printMacAddress()`                 | Prints the ESP32’s station MAC address to the serial monitor.         |
+
+---
+
+## Example Sketch
+```cpp
+#include <Arduino.h>
+#include <TurtleReceiver.h>
+
+NetController controller(); // debug messages off by default
+
+void setup() {
+  Serial.begin(115200);
+  controller.controllerSetup();
+  printMacAddress();
+}
+
+void loop() {
+  // Read joystick
+  float joyX = controller.getJoy1X();
+  float joyY = controller.getJoy1Y();
+  bool joyClick = controller.getJoy1Z();
+
+  // Print values
+  if (joyX != 0 || joyY != 0 || joyClick) {
+    Serial.printf("Joy: X=%.2f  Y=%.2f  Click=%d\n", joyX, joyY, joyClick);
+  }
+
+  // Buttons
+  if (controller.getA()) Serial.println("Button A pressed");
+  if (controller.getB()) Serial.println("Button B pressed");
+  if (controller.getX()) Serial.println("Button X pressed");
+  if (controller.getY()) Serial.println("Button Y pressed");
+  if (controller.getL()) Serial.println("Button L pressed");
+  if (controller.getR()) Serial.println("Button R pressed");
+
+  delay(50);
+}
 ```
 
-## References
+---
 
-- [HURC Receiver Documentation](https://www.turtlerobotics.org/hatchling) — all `NetController` getter functions
-- [ESP32-WROOM getting started](https://randomnerdtutorials.com/getting-started-with-esp32/)
-- [L298N tutorial](https://lastminuteengineers.com/l298n-dc-stepper-driver-arduino-tutorial/)
-Test sentence
+
